@@ -93,6 +93,11 @@ export default function App() {
   const [userEmail, setUserEmail] = useState('');
   const [alertSuccess, setAlertSuccess] = useState(false);
 
+  // Price cache with expiration (5 minutes)
+  const priceCache = React.useRef<Record<number, { data: { latestPrices: PriceEntry[], history: HistoryEntry[] }, timestamp: number }>>({});
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  const searchCache = React.useRef<Record<string, { data: Product[], timestamp: number }>>({});
+
   useEffect(() => {
     if (user) {
       setUserEmail(user.email);
@@ -222,10 +227,22 @@ export default function App() {
   }, [searchQuery]);
 
   const fetchProducts = async () => {
+    const query = searchQuery.trim();
+    if (!query) return;
+
+    // Check cache
+    const cached = searchCache.current[query];
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      setSearchResults(cached.data);
+      return;
+    }
+
     try {
-      const res = await fetch(`/api/products/search?q=${encodeURIComponent(searchQuery)}`);
+      const res = await fetch(`/api/products/search?q=${encodeURIComponent(query)}`);
       const data = await res.json();
       setSearchResults(data);
+      // Store in cache
+      searchCache.current[query] = { data, timestamp: Date.now() };
     } catch (err) {
       console.error(err);
     }
@@ -234,10 +251,21 @@ export default function App() {
   const handleProductSelect = async (product: Product) => {
     setLoading(true);
     setSelectedProduct(product);
+    
+    // Check cache first with expiration
+    const cached = priceCache.current[product.id];
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      setPriceData(cached.data);
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch(`/api/products/${product.id}/prices`);
       const data = await res.json();
       setPriceData(data);
+      // Store in cache with timestamp
+      priceCache.current[product.id] = { data, timestamp: Date.now() };
     } catch (err) {
       console.error(err);
     } finally {
@@ -323,11 +351,11 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans">
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 font-sans">
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md bg-white p-8 rounded-3xl shadow-xl border border-slate-100 space-y-8"
+          className="w-full max-w-md bg-white/80 backdrop-blur-xl p-8 rounded-3xl shadow-2xl shadow-indigo-100/50 border border-white/50 space-y-8"
         >
           <div className="text-center space-y-2">
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-indigo-100">
@@ -403,7 +431,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="min-h-screen font-sans text-slate-900">
       {/* Header */}
       <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 py-3">
         <div className="max-w-md mx-auto flex items-center justify-between">
@@ -852,7 +880,26 @@ export default function App() {
                         />
                       </div>
                       <h2 className="text-2xl font-black text-slate-900">{selectedProduct.name}</h2>
-                      <p className="text-slate-500 font-medium">{selectedProduct.category} • Market Analysis</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-slate-500 font-medium">{selectedProduct.category} • Market Analysis</p>
+                        {priceCache.current[selectedProduct.id] && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-indigo-400 bg-indigo-50 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                              Cached
+                            </span>
+                            <button 
+                              onClick={() => {
+                                delete priceCache.current[selectedProduct.id];
+                                handleProductSelect(selectedProduct);
+                              }}
+                              className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"
+                              title="Refresh Data"
+                            >
+                              <TrendingDown className="w-3 h-3 rotate-180" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <button 
                       onClick={() => isInWishlist(selectedProduct.id) ? handleRemoveFromWishlist(selectedProduct.id) : handleAddToWishlist(selectedProduct.id)}
@@ -1037,7 +1084,7 @@ export default function App() {
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+              className="relative w-full max-w-md bg-white/90 backdrop-blur-xl rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-white/50"
             >
               <div className="w-12 h-1.5 bg-slate-100 rounded-full mx-auto mb-6 sm:hidden" />
               
@@ -1105,7 +1152,7 @@ export default function App() {
 
       {/* Bottom Nav */}
       {!selectedProduct && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-4">
+        <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-slate-200 px-6 py-4 z-30">
           <div className="max-w-md mx-auto flex justify-between items-center">
             <button 
               onClick={() => setView('search')}
